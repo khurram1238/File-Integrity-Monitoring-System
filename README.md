@@ -31,7 +31,8 @@ It provides real-time monitoring, automatic backup, email alerts, and a secure G
 ## 📂 Installation & Usage
 1. Clone the repository:
    ```bash
-   git clone https://github.com/USERNAME/REPO.git
+   https://github.com/khurram1238/File-Integrity-Monitoring-System.git
+   
    Install dependencies:
 
 pip install -r requirements.txt
