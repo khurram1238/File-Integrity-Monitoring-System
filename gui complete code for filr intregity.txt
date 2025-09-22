@@ -1,0 +1,243 @@
+import os
+import json
+import hashlib
+import threading
+import tkinter as tk
+from tkinter import filedialog, messagebox, simpledialog
+from tkinter.ttk import Progressbar
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+import configparser
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import datetime
+import shutil
+import pandas as pd
+
+HASH_FILE = 'hash_store.json'
+EXCLUDE_FILE = 'exclude.txt'
+BACKUP_DIR = 'backup'
+LOG_FILE = 'log.txt'
+
+# Load config for email
+config = configparser.ConfigParser()
+config.read('config.ini')
+SENDER_EMAIL = config['EMAIL']['Sender']
+APP_PASSWORD = config['EMAIL']['AppPassword']
+RECEIVER_EMAIL = config['EMAIL']['Receiver']
+
+# Create necessary files if not exist
+if not os.path.exists(EXCLUDE_FILE):
+    open(EXCLUDE_FILE, 'w').close()
+if not os.path.exists(BACKUP_DIR):
+    os.makedirs(BACKUP_DIR)
+
+# Email Alert
+def send_email_alert(file_path):
+    try:
+        subject = "\u26a0\ufe0f File Integrity Alert"
+        body = f"File has been modified: {file_path}"
+
+        msg = MIMEMultipart()
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = RECEIVER_EMAIL
+        msg['Subject'] = subject
+
+        msg.attach(MIMEText(body, 'plain'))
+        text = msg.as_string()
+
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(SENDER_EMAIL, APP_PASSWORD)
+        server.sendmail(SENDER_EMAIL, RECEIVER_EMAIL, text)
+        server.quit()
+        print(f"[EMAIL SENT] Alert sent for: {file_path}")
+    except Exception as e:
+        print(f"[EMAIL ERROR] {e}")
+
+# Hash function
+def generate_file_hash(file_path):
+    try:
+        with open(file_path, 'rb') as f:
+            file_hash = hashlib.sha256()
+            while chunk := f.read(4096):
+                file_hash.update(chunk)
+            return file_hash.hexdigest()
+    except:
+        return None
+
+# Load and save hashes
+def save_hashes(hash_dict):
+    with open(HASH_FILE, 'w') as f:
+        json.dump(hash_dict, f, indent=4)
+
+def load_hashes():
+    if os.path.exists(HASH_FILE):
+        with open(HASH_FILE, 'r') as f:
+            return json.load(f)
+    return {}
+
+def load_excluded():
+    with open(EXCLUDE_FILE, 'r') as f:
+        return [line.strip() for line in f if line.strip()]
+
+# Backup file
+def backup_file(file_path):
+    try:
+        if os.path.exists(file_path):
+            base_name = os.path.basename(file_path)
+            backup_name = f"{base_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            backup_path = os.path.join(BACKUP_DIR, backup_name)
+            shutil.copy2(file_path, backup_path)
+            print(f"[BACKUP DONE] {backup_path}")
+    except Exception as e:
+        print(f"[BACKUP ERROR] {e}")
+
+# Export to Excel
+def export_to_excel(data):
+    df = pd.DataFrame(list(data.items()), columns=['File Path', 'Hash'])
+    df.to_excel('hash_report.xlsx', index=False)
+
+# Logging
+def log_event(message):
+    try:
+        with open(LOG_FILE, 'a') as f:
+            log_line = f"{datetime.now()}: {message}\n"
+            f.write(log_line)
+            print(f"[LOGGED] {log_line.strip()}")
+    except Exception as e:
+        print(f"[LOG ERROR] {e}")
+
+# Watchdog real-time monitor
+class ChangeHandler(FileSystemEventHandler):
+    def on_modified(self, event):
+        if not event.is_directory:
+            print(f"[MONITOR] File changed: {event.src_path}")  # 🛠️ Debug line
+            send_email_alert(event.src_path)
+            backup_file(event.src_path)
+            log_event(f"File changed: {event.src_path}")
+
+class FileIntegrityApp:
+    def __init__(self, master):
+        self.master = master
+        self.master.title("File Integrity Monitor")
+        self.master.geometry("650x500")
+        self.master.configure(bg="#2c2f33")
+
+        if not self.prompt_password():
+            self.master.destroy()
+            return
+
+        self.folder_path = tk.StringVar()
+        self.observer = None
+
+        tk.Label(master, text="Select Folder:", bg="#2c2f33", fg="white").pack(pady=5)
+        tk.Entry(master, textvariable=self.folder_path, width=60).pack(pady=5)
+        tk.Button(master, text="Browse", command=self.browse_folder).pack(pady=5)
+
+        tk.Button(master, text="Initial Scan & Save", command=self.initial_scan).pack(pady=5)
+        tk.Button(master, text="Re-Scan & Compare", command=self.rescan_compare).pack(pady=5)
+        tk.Button(master, text="Export to Excel", command=self.export_excel).pack(pady=5)
+        tk.Button(master, text="Start Real-Time Monitor", command=self.start_monitor).pack(pady=5)
+        tk.Button(master, text="Stop Monitor", command=self.stop_monitor).pack(pady=5)
+
+        self.progress = Progressbar(master, orient=tk.HORIZONTAL, length=400, mode='determinate')
+        self.progress.pack(pady=10)
+
+        self.log = tk.Text(master, height=12, bg="#23272a", fg="white")
+        self.log.pack(fill=tk.BOTH, expand=True)
+
+    def prompt_password(self):
+        password = simpledialog.askstring("Password", "Enter password to access:", show='*')
+        return password == "admin123"
+
+    def browse_folder(self):
+        path = filedialog.askdirectory()
+        if path:
+            self.folder_path.set(path)
+
+    def initial_scan(self):
+        folder = self.folder_path.get()
+        if not os.path.isdir(folder):
+            messagebox.showerror("Error", "Invalid folder")
+            return
+        self.log.insert(tk.END, f"Initial scan of: {folder}\n")
+        threading.Thread(target=self.scan_and_save, args=(folder,)).start()
+
+    def scan_and_save(self, folder):
+        hash_dict = {}
+        exclude = load_excluded()
+        files = [os.path.join(root, f) for root, _, fs in os.walk(folder) for f in fs]
+        total = len(files)
+
+        for i, path in enumerate(files):
+            if any(x in path for x in exclude):
+                continue
+            hash_val = generate_file_hash(path)
+            if hash_val:
+                hash_dict[path] = hash_val
+                self.log.insert(tk.END, f"[+] {path}\n")
+            self.progress['value'] = ((i+1)/total)*100
+            self.log.see(tk.END)
+        save_hashes(hash_dict)
+        self.log.insert(tk.END, "Scan complete.\n")
+
+    def rescan_compare(self):
+        folder = self.folder_path.get()
+        if not os.path.isdir(folder):
+            messagebox.showerror("Error", "Invalid folder")
+            return
+        self.log.insert(tk.END, f"Re-scanning: {folder}\n")
+        threading.Thread(target=self.compare_hashes, args=(folder,)).start()
+
+    def compare_hashes(self, folder):
+        old_hashes = load_hashes()
+        exclude = load_excluded()
+        changed = 0
+        files = [os.path.join(root, f) for root, _, fs in os.walk(folder) for f in fs]
+        total = len(files)
+
+        for i, path in enumerate(files):
+            if any(x in path for x in exclude):
+                continue
+            new_hash = generate_file_hash(path)
+            old_hash = old_hashes.get(path)
+            if old_hash and old_hash != new_hash:
+                self.log.insert(tk.END, f"[!] Changed: {path}\n")
+                send_email_alert(path)
+                backup_file(path)
+                log_event(f"File changed: {path}")
+                changed += 1
+            elif not old_hash:
+                self.log.insert(tk.END, f"[+] New file: {path}\n")
+            self.progress['value'] = ((i+1)/total)*100
+            self.log.see(tk.END)
+        self.log.insert(tk.END, f"Compare complete. {changed} file(s) changed.\n")
+
+    def export_excel(self):
+        hashes = load_hashes()
+        export_to_excel(hashes)
+        messagebox.showinfo("Exported", "Report saved as hash_report.xlsx")
+
+    def start_monitor(self):
+        folder = self.folder_path.get()
+        if not os.path.isdir(folder):
+            messagebox.showerror("Error", "Invalid folder")
+            return
+        self.observer = Observer()
+        self.observer.schedule(ChangeHandler(), folder, recursive=True)
+        self.observer.start()
+        self.log.insert(tk.END, "[Monitor] Real-time monitoring started.\n")
+
+    def stop_monitor(self):
+        if self.observer:
+            self.observer.stop()
+            self.observer.join()
+            self.observer = None
+            self.log.insert(tk.END, "[Monitor] Stopped.\n")
+
+if __name__ == '__main__':
+    root = tk.Tk()
+    app = FileIntegrityApp(root)
+    root.mainloop()
