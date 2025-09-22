@@ -1,0 +1,21 @@
+5. GUI Application Using Tkinter
+import tkinter as tk
+from tkinter import filedialog, messagebox, simpledialog
+from tkinter.ttk import Progressbar
+
+class FileIntegrityApp:
+    def __init__(self, master):
+        self.master = master
+        self.master.title("File Integrity Monitor")
+        self.master.geometry("650x500")
+        self.master.configure(bg="#2c2f33")
+
+        if not self.prompt_password():
+            self.master.destroy()
+            return
+
+        # Folder selection and buttons
+        self.folder_path = tk.StringVar()
+        tk.Label(master, text="Select Folder:", bg="#2c2f33", fg="white").pack(pady=5)
+        tk.Entry(master, textvariable=self.folder_path, width=60).pack(pady=5)
+        tk.Button(master, text="Browse", command=self.browse_folder).pack(pady=5)
