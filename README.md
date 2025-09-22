@@ -41,6 +41,7 @@ pip install -r requirements.txt
 Configure email in config.ini:
 
 [EMAIL]
+
 Sender = your_email@gmail.com
 AppPassword = your_app_password
 Receiver = receiver_email@gmail.com
