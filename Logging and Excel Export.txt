@@ -1,0 +1,14 @@
+3. Logging and Excel Export
+from datetime import datetime
+import pandas as pd
+
+LOG_FILE = 'log.txt'
+
+def log_event(message):
+    with open(LOG_FILE, 'a') as f:
+        f.write(f"{datetime.now()}: {message}\n")
+
+def export_to_excel(data):
+    df = pd.DataFrame(list(data.items()), columns=['File Path', 'Hash'])
+    df.to_excel('hash_report.xlsx', index=False)
+________________________________________
