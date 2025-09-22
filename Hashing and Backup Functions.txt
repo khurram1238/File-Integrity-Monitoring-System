@@ -1,0 +1,23 @@
+2. Hashing and Backup Functions
+import hashlib
+import shutil
+from datetime import datetime
+
+def generate_file_hash(file_path):
+    try:
+        with open(file_path, 'rb') as f:
+            file_hash = hashlib.sha256()
+            while chunk := f.read(4096):
+                file_hash.update(chunk)
+            return file_hash.hexdigest()
+    except:
+        return None
+
+def backup_file(file_path):
+    try:
+        if os.path.exists(file_path):
+            base_name = os.path.basename(file_path)
+            backup_name = f"{base_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            shutil.copy2(file_path, os.path.join('backup', backup_name))
+    except Exception as e:
+        print(f"[BACKUP ERROR] {e}")
